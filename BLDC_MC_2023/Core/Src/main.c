@@ -514,19 +514,19 @@ void read_hall(void){
 	hall_c = HAL_GPIO_ReadPin(HALL_C_GPIO_Port,HALL_C_Pin);
 
 	// Uncomment after testing
-//	bldc_step = hall_a + 2*hall_b + 4*hall_c;
+	bldc_step = hall_a + 2*hall_b + 4*hall_c;
 
 	// testing for one value
 //	bldc_step = 3;
 	// end testing
 
 	// testing for continous changes
-	if (bldc_step > 6){
-		bldc_step = 1;
-	}
-	else {
-		bldc_step++;
-	}
+//	if (bldc_step > 6){
+//		bldc_step = 1;
+//	}
+//	else {
+//		bldc_step++;
+//	}
 	// end testing
 
 }
