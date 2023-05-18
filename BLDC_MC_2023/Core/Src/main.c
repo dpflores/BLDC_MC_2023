@@ -31,6 +31,13 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+
+// Definiciones principales
+
+// Definiciones adicionales
+
+#define COMMUTATION_DELAY_US 150u	// microsegundos para el delay
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -43,6 +50,7 @@ ADC_HandleTypeDef hadc1;
 
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim2;
+TIM_HandleTypeDef htim3;
 
 /* USER CODE BEGIN PV */
 
@@ -54,6 +62,7 @@ static void MX_GPIO_Init(void);
 static void MX_ADC1_Init(void);
 static void MX_TIM1_Init(void);
 static void MX_TIM2_Init(void);
+static void MX_TIM3_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -62,9 +71,16 @@ static void MX_TIM2_Init(void);
 /* USER CODE BEGIN 0 */
 
 // HEADERS DE FUNCIONES
+
+// funciones principales
 void get_adc(void);
 void read_hall(void);
 void bldc_move(void);
+
+
+//funciones adicionales
+void delay_us (uint16_t us);
+
 
 // VARIABLES
 uint16_t raw_adc = 0;
@@ -77,7 +93,9 @@ int bldc_step = 0;
 int duty_cycle = 0;
 
 
+// timer flags
 
+uint8_t timer2_flag = 0;
 
 
 /* USER CODE END 0 */
@@ -113,13 +131,15 @@ int main(void)
   MX_ADC1_Init();
   MX_TIM1_Init();
   MX_TIM2_Init();
+  MX_TIM3_Init();
   /* USER CODE BEGIN 2 */
 
 
 
-  // Inicializamos los timer timer
+  // Inicializamos los timer timers
   HAL_TIM_Base_Start(&htim1);	// Timer de PWMs (10kH)
-  HAL_TIM_Base_Start_IT(&htim2);	// Timer principal (1Hz)
+  HAL_TIM_Base_Start_IT(&htim2);	// Timer principal (2.5 kHz)
+  HAL_TIM_Base_Start(&htim3);		// Timer para delay de microsegundos
 
   // Inicializamos los 3 canales de PWM
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
@@ -146,6 +166,16 @@ int main(void)
   while (1)
   {
 
+	  if (timer2_flag == 1){
+		  get_adc();
+
+		  read_hall();
+
+		  bldc_move();
+
+		  timer2_flag = 0;
+
+	  }
 
     /* USER CODE END WHILE */
 
@@ -348,7 +378,7 @@ static void MX_TIM2_Init(void)
   htim2.Instance = TIM2;
   htim2.Init.Prescaler = 8-1;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim2.Init.Period = 3200-1;
+  htim2.Init.Period = 400-1;
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
@@ -369,6 +399,51 @@ static void MX_TIM2_Init(void)
   /* USER CODE BEGIN TIM2_Init 2 */
 
   /* USER CODE END TIM2_Init 2 */
+
+}
+
+/**
+  * @brief TIM3 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM3_Init(void)
+{
+
+  /* USER CODE BEGIN TIM3_Init 0 */
+
+  /* USER CODE END TIM3_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM3_Init 1 */
+
+  /* USER CODE END TIM3_Init 1 */
+  htim3.Instance = TIM3;
+  htim3.Init.Prescaler = 8-1;
+  htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim3.Init.Period = 65535;
+  htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim3, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim3, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM3_Init 2 */
+
+  /* USER CODE END TIM3_Init 2 */
 
 }
 
@@ -438,10 +513,21 @@ void read_hall(void){
 	hall_b = HAL_GPIO_ReadPin(HALL_B_GPIO_Port,HALL_B_Pin);
 	hall_c = HAL_GPIO_ReadPin(HALL_C_GPIO_Port,HALL_C_Pin);
 
-	bldc_step = hall_a + 2*hall_b + 4*hall_c;
+	// Uncomment after testing
+//	bldc_step = hall_a + 2*hall_b + 4*hall_c;
 
-	// testing
+	// testing for one value
 //	bldc_step = 3;
+	// end testing
+
+	// testing for continous changes
+	if (bldc_step > 6){
+		bldc_step = 1;
+	}
+	else {
+		bldc_step++;
+	}
+	// end testing
 
 }
 
@@ -455,6 +541,8 @@ void bldc_move(void){
 		HAL_GPIO_WritePin(B_LOW_GPIO_Port , B_LOW_Pin,  GPIO_PIN_RESET);
 
 		// Delay
+		delay_us(COMMUTATION_DELAY_US);
+
 
 		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, duty_cycle);	//A_HIGH
 		HAL_GPIO_WritePin(C_LOW_GPIO_Port , C_LOW_Pin,  GPIO_PIN_SET);
@@ -466,6 +554,7 @@ void bldc_move(void){
 		HAL_GPIO_WritePin(C_LOW_GPIO_Port , C_LOW_Pin,  GPIO_PIN_RESET);
 
 		// Delay
+		delay_us(COMMUTATION_DELAY_US);
 
 		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, duty_cycle);	//B_HIGH
 		HAL_GPIO_WritePin(A_LOW_GPIO_Port , A_LOW_Pin,  GPIO_PIN_SET);
@@ -481,6 +570,7 @@ void bldc_move(void){
 
 
 		// Delay
+		delay_us(COMMUTATION_DELAY_US);
 
 		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, duty_cycle);	//B_HIGH
 		HAL_GPIO_WritePin(C_LOW_GPIO_Port , C_LOW_Pin,  GPIO_PIN_SET);
@@ -493,6 +583,7 @@ void bldc_move(void){
 		HAL_GPIO_WritePin(C_LOW_GPIO_Port , C_LOW_Pin,  GPIO_PIN_RESET);
 
 		// Delay
+		delay_us(COMMUTATION_DELAY_US);
 
 		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, duty_cycle);	//C_HIGH
 		HAL_GPIO_WritePin(B_LOW_GPIO_Port , B_LOW_Pin,  GPIO_PIN_SET);
@@ -509,6 +600,7 @@ void bldc_move(void){
 		HAL_GPIO_WritePin(C_LOW_GPIO_Port , C_LOW_Pin,  GPIO_PIN_RESET);
 
 		// Delay
+		delay_us(COMMUTATION_DELAY_US);
 
 		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, duty_cycle);	//A_HIGH
 		HAL_GPIO_WritePin(B_LOW_GPIO_Port , B_LOW_Pin,  GPIO_PIN_SET);
@@ -524,6 +616,7 @@ void bldc_move(void){
 		HAL_GPIO_WritePin(C_LOW_GPIO_Port , C_LOW_Pin,  GPIO_PIN_RESET);
 
 		// Delay
+		delay_us(COMMUTATION_DELAY_US);
 
 		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, duty_cycle);	//C_HIGH
 		HAL_GPIO_WritePin(A_LOW_GPIO_Port , A_LOW_Pin,  GPIO_PIN_SET);
@@ -542,6 +635,10 @@ void bldc_move(void){
 	}
 }
 
+void delay_us(uint16_t us){
+	__HAL_TIM_SET_COUNTER(&htim3,0);  // set the counter value a 0
+	while (__HAL_TIM_GET_COUNTER(&htim3) < us);  // wait for the counter to reach the us input in the parameter
+}
 //INTERRUPCIONES
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){
@@ -549,13 +646,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){
 	// Verificamos si es el timer principal y ejecutamos todo
 	if (htim == &htim2){
 
-		get_adc();
-
-		read_hall();
-
-		bldc_move();
-
-		HAL_GPIO_TogglePin(TEST_LED_GPIO_Port,TEST_LED_Pin);
+		timer2_flag = 1;
 
 	}
 }
