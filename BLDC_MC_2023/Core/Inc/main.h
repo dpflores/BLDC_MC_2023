@@ -67,7 +67,7 @@ void Error_Handler(void);
 #define HALL_A_GPIO_Port GPIOB
 #define HALL_B_Pin GPIO_PIN_1
 #define HALL_B_GPIO_Port GPIOB
-#define HALL_C_Pin GPIO_PIN_2
+#define HALL_C_Pin GPIO_PIN_10
 #define HALL_C_GPIO_Port GPIOB
 #define A_LOW_Pin GPIO_PIN_13
 #define A_LOW_GPIO_Port GPIOB
