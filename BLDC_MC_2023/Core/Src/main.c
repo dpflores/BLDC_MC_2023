@@ -33,10 +33,15 @@
 /* USER CODE BEGIN PD */
 
 // Definiciones principales
+#define POLE_PAIRS 23u
+#define ESTIMATION_RATE 2u
+
+#define STEPS2RPM 60*ESTIMATION_RATE/POLE_PAIRS/6 // 60 segundos, 2 Hz, 23 pp, 6 pasos
 
 // Definiciones adicionales
 
 #define COMMUTATION_DELAY_US 150u	// microsegundos para el delay
+
 
 /* USER CODE END PD */
 
@@ -51,6 +56,7 @@ ADC_HandleTypeDef hadc1;
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim3;
+TIM_HandleTypeDef htim4;
 
 /* USER CODE BEGIN PV */
 
@@ -63,6 +69,7 @@ static void MX_ADC1_Init(void);
 static void MX_TIM1_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_TIM3_Init(void);
+static void MX_TIM4_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -76,6 +83,7 @@ static void MX_TIM3_Init(void);
 void get_adc(void);
 void read_hall(void);
 void bldc_move(void);
+void bldc_move_back(void);
 
 
 //funciones adicionales
@@ -85,17 +93,25 @@ void delay_us (uint16_t us);
 // VARIABLES
 uint16_t raw_adc = 0;
 
-int hall_a = 0;
-int hall_b = 0;
-int hall_c = 0;
+uint8_t hall_a = 0;
+uint8_t hall_b = 0;
+uint8_t hall_c = 0;
 
-int bldc_step = 0;
-int duty_cycle = 0;
+uint8_t direction = 0;		// 0 for forward, 1 for backward
+uint8_t bldc_prev_step = 0;
+uint8_t bldc_step = 0;
+uint16_t steps = 0;
+
+float current_speed_rpm = 0;
+uint8_t duty_cycle = 0;
 
 
 // timer flags
 
 uint8_t timer2_flag = 0;
+uint8_t timer4_flag = 0;
+uint8_t timer4_counts = 0;
+uint8_t estimation_flag = 0;
 
 
 /* USER CODE END 0 */
@@ -132,6 +148,7 @@ int main(void)
   MX_TIM1_Init();
   MX_TIM2_Init();
   MX_TIM3_Init();
+  MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
 
 
@@ -140,6 +157,7 @@ int main(void)
   HAL_TIM_Base_Start(&htim1);	// Timer de PWMs (10kH)
   HAL_TIM_Base_Start_IT(&htim2);	// Timer principal (2.5 kHz)
   HAL_TIM_Base_Start(&htim3);		// Timer para delay de microsegundos
+  HAL_TIM_Base_Start_IT(&htim4);	// Timer para el control (10Hz)
 
   // Inicializamos los 3 canales de PWM
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
@@ -159,6 +177,9 @@ int main(void)
   // Incializamos el led de testeo apagado
   HAL_GPIO_WritePin(TEST_LED_GPIO_Port , TEST_LED_Pin,  GPIO_PIN_SET);
 
+  // Leemos los hall por primera vez
+  read_hall();
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -171,10 +192,35 @@ int main(void)
 
 		  read_hall();
 
-		  bldc_move();
+		  if (direction == 0){
+			  bldc_move();
+		  }
+		  else {
+			  bldc_move_back();
+		  }
+
 
 		  timer2_flag = 0;
 
+	  }
+
+	  if (timer4_flag == 1){
+
+		  // Acá realizamos el control
+
+		  //testeo
+		  //HAL_GPIO_TogglePin(TEST_LED_GPIO_Port , TEST_LED_Pin);
+
+
+		  timer4_flag = 0;
+
+	  }
+
+	  if (estimation_flag){
+//		  HAL_GPIO_TogglePin(TEST_LED_GPIO_Port , TEST_LED_Pin);
+		  current_speed_rpm = steps*STEPS2RPM;
+		  estimation_flag = 0;
+		  steps = 0;
 	  }
 
     /* USER CODE END WHILE */
@@ -448,6 +494,51 @@ static void MX_TIM3_Init(void)
 }
 
 /**
+  * @brief TIM4 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM4_Init(void)
+{
+
+  /* USER CODE BEGIN TIM4_Init 0 */
+
+  /* USER CODE END TIM4_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM4_Init 1 */
+
+  /* USER CODE END TIM4_Init 1 */
+  htim4.Instance = TIM4;
+  htim4.Init.Prescaler = 8000-1;
+  htim4.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim4.Init.Period = 100-1;
+  htim4.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim4.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim4) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim4, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim4, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM4_Init 2 */
+
+  /* USER CODE END TIM4_Init 2 */
+
+}
+
+/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -513,21 +604,30 @@ void read_hall(void){
 	hall_b = HAL_GPIO_ReadPin(HALL_B_GPIO_Port,HALL_B_Pin);
 	hall_c = HAL_GPIO_ReadPin(HALL_C_GPIO_Port,HALL_C_Pin);
 
-	// Uncomment after testing
-	bldc_step = hall_a + 2*hall_b + 4*hall_c;
-
 	// testing for one value
-//	bldc_step = 3;
+	//	bldc_step = 3;
 	// end testing
 
 	// testing for continous changes
-//	if (bldc_step > 6){
-//		bldc_step = 1;
-//	}
-//	else {
-//		bldc_step++;
-//	}
+	if (bldc_step > 6){
+		bldc_step = 1;
+	}
+	else {
+		bldc_step++;
+	}
 	// end testing
+
+
+	// Descomentar luego del testeo
+//	bldc_step = hall_a + 2*hall_b + 4*hall_c;
+
+	// Para calcular velocidad
+	if (bldc_step != bldc_prev_step){
+		steps += 1;
+	}
+
+	bldc_prev_step	= bldc_step;
+
 
 }
 
@@ -635,6 +735,110 @@ void bldc_move(void){
 	}
 }
 
+void bldc_move_back(void){
+
+	switch(bldc_step){
+	case 6:
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 0);	//B_HIGH
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, 0);	//C_HIGH
+		HAL_GPIO_WritePin(A_LOW_GPIO_Port , A_LOW_Pin,  GPIO_PIN_RESET);
+		HAL_GPIO_WritePin(B_LOW_GPIO_Port , B_LOW_Pin,  GPIO_PIN_RESET);
+
+		// Delay
+		delay_us(COMMUTATION_DELAY_US);
+
+
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, duty_cycle);	//A_HIGH
+		HAL_GPIO_WritePin(C_LOW_GPIO_Port , C_LOW_Pin,  GPIO_PIN_SET);
+		break;
+	case 5:
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);	//A_HIGH
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, 0);	//C_HIGH
+		HAL_GPIO_WritePin(B_LOW_GPIO_Port , B_LOW_Pin,  GPIO_PIN_RESET);
+		HAL_GPIO_WritePin(C_LOW_GPIO_Port , C_LOW_Pin,  GPIO_PIN_RESET);
+
+		// Delay
+		delay_us(COMMUTATION_DELAY_US);
+
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, duty_cycle);	//B_HIGH
+		HAL_GPIO_WritePin(A_LOW_GPIO_Port , A_LOW_Pin,  GPIO_PIN_SET);
+
+		break;
+	case 4:
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);	//A_HIGH
+
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, 0);	//C_HIGH
+
+		HAL_GPIO_WritePin(A_LOW_GPIO_Port , A_LOW_Pin,  GPIO_PIN_RESET);
+		HAL_GPIO_WritePin(B_LOW_GPIO_Port , B_LOW_Pin,  GPIO_PIN_RESET);
+
+
+		// Delay
+		delay_us(COMMUTATION_DELAY_US);
+
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, duty_cycle);	//B_HIGH
+		HAL_GPIO_WritePin(C_LOW_GPIO_Port , C_LOW_Pin,  GPIO_PIN_SET);
+
+		break;
+	case 3:
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);	//A_HIGH
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 0);	//B_HIGH
+		HAL_GPIO_WritePin(A_LOW_GPIO_Port , A_LOW_Pin,  GPIO_PIN_RESET);
+		HAL_GPIO_WritePin(C_LOW_GPIO_Port , C_LOW_Pin,  GPIO_PIN_RESET);
+
+		// Delay
+		delay_us(COMMUTATION_DELAY_US);
+
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, duty_cycle);	//C_HIGH
+		HAL_GPIO_WritePin(B_LOW_GPIO_Port , B_LOW_Pin,  GPIO_PIN_SET);
+
+		break;
+
+	case 2:
+
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 0);	//B_HIGH
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, 0);	//C_HIGH
+
+		HAL_GPIO_WritePin(A_LOW_GPIO_Port , A_LOW_Pin,  GPIO_PIN_RESET);
+
+		HAL_GPIO_WritePin(C_LOW_GPIO_Port , C_LOW_Pin,  GPIO_PIN_RESET);
+
+		// Delay
+		delay_us(COMMUTATION_DELAY_US);
+
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, duty_cycle);	//A_HIGH
+		HAL_GPIO_WritePin(B_LOW_GPIO_Port , B_LOW_Pin,  GPIO_PIN_SET);
+		break;
+
+	case 1:
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);	//A_HIGH
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 0);	//B_HIGH
+
+
+
+		HAL_GPIO_WritePin(B_LOW_GPIO_Port , B_LOW_Pin,  GPIO_PIN_RESET);
+		HAL_GPIO_WritePin(C_LOW_GPIO_Port , C_LOW_Pin,  GPIO_PIN_RESET);
+
+		// Delay
+		delay_us(COMMUTATION_DELAY_US);
+
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, duty_cycle);	//C_HIGH
+		HAL_GPIO_WritePin(A_LOW_GPIO_Port , A_LOW_Pin,  GPIO_PIN_SET);
+
+		break;
+
+	default:
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);	//A_HIGH
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 0);	//B_HIGH
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, 0);	//C_HIGH
+
+		HAL_GPIO_WritePin(A_LOW_GPIO_Port , A_LOW_Pin,  GPIO_PIN_RESET);
+		HAL_GPIO_WritePin(B_LOW_GPIO_Port , B_LOW_Pin,  GPIO_PIN_RESET);
+		HAL_GPIO_WritePin(C_LOW_GPIO_Port , C_LOW_Pin,  GPIO_PIN_RESET);
+		break;
+	}
+}
+
 void delay_us(uint16_t us){
 	__HAL_TIM_SET_COUNTER(&htim3,0);  // set the counter value a 0
 	while (__HAL_TIM_GET_COUNTER(&htim3) < us);  // wait for the counter to reach the us input in the parameter
@@ -643,11 +847,21 @@ void delay_us(uint16_t us){
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){
 
-	// Verificamos si es el timer principal y ejecutamos todo
 	if (htim == &htim2){
 
 		timer2_flag = 1;
 
+	}
+	if (htim == &htim4){
+
+		timer4_flag = 1;
+
+		if (timer4_counts == 5){
+			estimation_flag = 1;
+
+			timer4_counts = 0;
+		}
+		timer4_counts += 1;
 	}
 }
 
