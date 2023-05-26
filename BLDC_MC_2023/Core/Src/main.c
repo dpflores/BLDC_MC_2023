@@ -21,7 +21,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "PID.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -38,10 +38,23 @@
 
 #define STEPS2RPM 60*ESTIMATION_RATE/POLE_PAIRS/6 // 60 segundos, 2 Hz, 23 pp, 6 pasos
 
+
 // Definiciones adicionales
 
-#define COMMUTATION_DELAY_US 150u	// microsegundos para el delay
+#define COMMUTATION_DELAY_US 700u	// microsegundos para el delay
 
+
+/* Controller parameters */
+#define PID_KP  0.04f
+#define PID_KI  0.1f
+#define PID_KD  0.0f
+
+#define PID_TAU 0.02f
+
+#define PID_LIM_MIN  0.0f
+#define PID_LIM_MAX  100.0f
+
+#define SAMPLE_TIME_S 0.1f
 
 /* USER CODE END PD */
 
@@ -102,16 +115,23 @@ uint8_t bldc_prev_step = 0;
 uint8_t bldc_step = 0;
 uint16_t steps = 0;
 
+float desired_speed_rpm = 0;
 float current_speed_rpm = 0;
+float error = 0; //difference between desired and measured speed
+float integral = 0;
 uint8_t duty_cycle = 0;
 
 
 // timer flags
-
 uint8_t timer2_flag = 0;
 uint8_t timer4_flag = 0;
 uint8_t timer4_counts = 0;
 uint8_t estimation_flag = 0;
+
+
+//PID
+PIDController pid = { PID_KP, PID_KI, PID_KD, PID_TAU,
+						PID_LIM_MIN, PID_LIM_MAX, SAMPLE_TIME_S };
 
 
 /* USER CODE END 0 */
@@ -206,14 +226,27 @@ int main(void)
 
 	  if (timer4_flag == 1){
 
-		  // Acá realizamos el control
+		  // Acá se realiza el control PID
+		  //CONTROL
+		  	uint8_t u = 0;
+
+			PIDController_Update(&pid, desired_speed_rpm, current_speed_rpm);
+
+			// Protection
+			if(desired_speed_rpm<=20){
+				PIDController_Reset(&pid);
+			}
+
+			integral = pid.integrator;
+
+			u = pid.out;
+
+			duty_cycle = u;
 
 		  //testeo
 		  //HAL_GPIO_TogglePin(TEST_LED_GPIO_Port , TEST_LED_Pin);
 
-
 		  timer4_flag = 0;
-
 	  }
 
 	  if (estimation_flag){
@@ -591,12 +624,14 @@ void get_adc(void){
 
 	raw_adc = HAL_ADC_GetValue(&hadc1);
 
-	duty_cycle = raw_adc/41;	// Obtiene el valor de entre 0 a 100 para el duty
+//	duty_cycle = raw_adc/41;	// Obtiene el valor de entre 0 a 100 para el duty
+//
+//	// Para que el sistema se suelte cuando el deseado sea menos del 10%
+//	if (duty_cycle<10){
+//		duty_cycle = 0;
+//	}
 
-	// Para que el sistema se suelte cuando el deseado sea menos del 10%
-	if (duty_cycle<10){
-		duty_cycle = 0;
-	}
+	desired_speed_rpm = raw_adc/12;
 }
 
 void read_hall(void){
@@ -609,17 +644,17 @@ void read_hall(void){
 	// end testing
 
 	// testing for continous changes
-	if (bldc_step > 6){
-		bldc_step = 1;
-	}
-	else {
-		bldc_step++;
-	}
+//	if (bldc_step > 6){
+//		bldc_step = 1;
+//	}
+//	else {
+//		bldc_step++;
+//	}
 	// end testing
 
 
 	// Descomentar luego del testeo
-//	bldc_step = hall_a + 2*hall_b + 4*hall_c;
+	bldc_step = hall_a + 2*hall_b + 4*hall_c;
 
 	// Para calcular velocidad
 	if (bldc_step != bldc_prev_step){
