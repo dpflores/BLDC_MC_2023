@@ -34,20 +34,24 @@
 
 // Definiciones principales
 #define POLE_PAIRS 23u
-#define ESTIMATION_RATE 2u
+#define VOLTAJE 48u
+#define STEP_ADC_RPM 10u
+#define ESTIMATION_RATE 5u // solo puede ser divisor de 10 {1, 2, 5, 10}.
 
 #define STEPS2RPM 60*ESTIMATION_RATE/POLE_PAIRS/6 // 60 segundos, 2 Hz, 23 pp, 6 pasos
 
 
 // Definiciones adicionales
 
-#define COMMUTATION_DELAY_US 700u	// microsegundos para el delay
+#define COMMUTATION_DELAY_US 350u	// microsegundos para el delay
 
 
 /* Controller parameters */
-#define PID_KP  0.04f
-#define PID_KI  0.1f
-#define PID_KD  0.0f
+// Para ESTIMATION_RATE de 2u: kp = 0.2; ki = 0.8; kd=0.0 (delay 700u)
+//						   5u: kp = 0.02; ki = 0.5; kd=0.0 (delay 700u)
+#define PID_KP  0.03f //
+#define PID_KI  0.35f // 0.15 0.01
+#define PID_KD  0.0f //0.0
 
 #define PID_TAU 0.02f
 
@@ -105,6 +109,7 @@ void delay_us (uint16_t us);
 
 // VARIABLES
 uint16_t raw_adc = 0;
+uint16_t rate_adc = 0;
 
 uint8_t hall_a = 0;
 uint8_t hall_b = 0;
@@ -457,7 +462,7 @@ static void MX_TIM2_Init(void)
   htim2.Instance = TIM2;
   htim2.Init.Prescaler = 8-1;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim2.Init.Period = 800-1;
+  htim2.Init.Period = 400-1;
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
@@ -631,7 +636,9 @@ void get_adc(void){
 //		duty_cycle = 0;
 //	}
 
-	desired_speed_rpm = raw_adc/12;
+	rate_adc = STEP_ADC_RPM*48*12/VOLTAJE;
+	raw_adc = rate_adc*(raw_adc/rate_adc);
+	desired_speed_rpm = raw_adc*STEP_ADC_RPM/rate_adc;
 }
 
 void read_hall(void){
@@ -891,7 +898,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){
 
 		timer4_flag = 1;
 
-		if (timer4_counts == 5){
+		if (timer4_counts == 10/ESTIMATION_RATE){
 			estimation_flag = 1;
 
 			timer4_counts = 0;
