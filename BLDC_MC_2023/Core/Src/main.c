@@ -176,7 +176,9 @@ int main(void)
   MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
 
-
+	
+  // Inicializamos el PID
+  PIDController_Init(&pid);
 
   // Inicializamos los timer timers
   HAL_TIM_Base_Start(&htim1);	// Timer de PWMs (10kH)
