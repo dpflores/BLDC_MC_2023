@@ -39,10 +39,9 @@
 #define ESTIMATION_RATE 5u // solo puede ser divisor de 10 {1, 2, 5, 10}.
 
 #define STEPS2RPM 60*ESTIMATION_RATE/POLE_PAIRS/6 // 60 segundos, 2 Hz, 23 pp, 6 pasos
-
-
+#define RPM2KMH 1/10.44
+#define SPEED_UNITS 0u		// 0 for RPM, 1 for KMH
 // Definiciones adicionales
-//jajas
 
 #define COMMUTATION_DELAY_US 350u	// microsegundos para el delay
 
@@ -61,6 +60,20 @@
 
 #define SAMPLE_TIME_S 0.1f
 
+
+/* CAN data */
+
+//Position of the respective data flags
+
+#define GF 0u  	// General flag
+#define PW 1u	// Power flag
+#define EM 2u	// Emergency flag
+#define SU 3u	// Speed unit		0 para RPM, 1 para KMH
+#define CS0 4u	// Cruise Speed 0
+#define CS1 5u	// Cruise Speed 1
+
+
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -70,6 +83,8 @@
 
 /* Private variables ---------------------------------------------------------*/
 ADC_HandleTypeDef hadc1;
+
+CAN_HandleTypeDef hcan;
 
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim2;
@@ -88,6 +103,7 @@ static void MX_TIM1_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_TIM3_Init(void);
 static void MX_TIM4_Init(void);
+static void MX_CAN_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -103,12 +119,12 @@ void read_hall(void);
 void bldc_move(void);
 void bldc_move_back(void);
 
-
 //funciones adicionales
 void delay_us (uint16_t us);
-
+void send_can_data(void);
 
 // VARIABLES
+uint8_t power = 0;
 uint16_t raw_adc = 0;
 uint16_t rate_adc = 0;
 
@@ -133,6 +149,17 @@ uint8_t timer2_flag = 0;
 uint8_t timer4_flag = 0;
 uint8_t timer4_counts = 0;
 uint8_t estimation_flag = 0;
+
+
+
+//CAN VARIABLES
+uint8_t CAN_FLAG_REG;	// Register of flags for can
+CAN_TxHeaderTypeDef TxHeader;
+CAN_RxHeaderTypeDef RxHeader;
+uint32_t TxMailbox;
+uint32_t FreeMailbox; // Check the amount of mailboxes free
+uint8_t TxData[8];
+uint8_t RxData[8];
 
 
 //PID
@@ -175,6 +202,7 @@ int main(void)
   MX_TIM2_Init();
   MX_TIM3_Init();
   MX_TIM4_Init();
+  MX_CAN_Init();
   /* USER CODE BEGIN 2 */
 
 	
@@ -202,6 +230,42 @@ int main(void)
   HAL_GPIO_WritePin(B_LOW_GPIO_Port , B_LOW_Pin,  GPIO_PIN_RESET);
   HAL_GPIO_WritePin(C_LOW_GPIO_Port , C_LOW_Pin,  GPIO_PIN_RESET);
 
+
+  //CAN
+  HAL_CAN_Start(&hcan);
+  //CAN FIFO activation
+  HAL_CAN_ActivateNotification(&hcan, CAN_IT_RX_FIFO0_MSG_PENDING);
+
+
+  // CAN_FLAG_REG Initialization
+  CAN_FLAG_REG |=  (1<<GF);	// General Flag 1 (necessary)
+  CAN_FLAG_REG = (CAN_FLAG_REG & (~(1 << SU))) | (SPEED_UNITS << SU); // speed unit setting a
+  CAN_FLAG_REG &= ~(1<<EM); // No Emergency
+  CAN_FLAG_REG &= ~(1<<PW); // Initial OFF
+  CAN_FLAG_REG &= ~(1<<CS0); //
+  CAN_FLAG_REG &= ~(1<<CS1); // Cruise speed
+
+
+
+  TxData[0] = 0; 	//Speed component
+  TxData[1] = 0;	//Speed component
+  TxData[2] = 0;	//Duty Cycle
+  TxData[3] = 0;	// ...
+  TxData[4] = 0;	// ...
+  TxData[5] = 0;	// ...
+  TxData[6] = 0;	// ...
+  TxData[7] = CAN_FLAG_REG;	//Flags byte  [0 0 0 0 0 0 0 1] [x x cs cs su em pw gf]
+
+
+  // x: not defined
+  // cs: cruice speed (0 to 3)
+  // su: speed units (0 for RPM, 1 for km/h)
+  // em: emergency ( 1 for alert)
+  // pw: Power flag (0 off, 1 on)
+  // gf: general flag (1 always)
+
+
+
   // Incializamos el led de testeo apagado
   HAL_GPIO_WritePin(TEST_LED_GPIO_Port , TEST_LED_Pin,  GPIO_PIN_SET);
 
@@ -216,8 +280,8 @@ int main(void)
   {
 
 	  if (timer2_flag == 1){
-		  get_adc();
 
+		  get_adc();
 		  read_hall();
 
 		  if (direction == 0){
@@ -227,16 +291,13 @@ int main(void)
 			  bldc_move_back();
 		  }
 
-
 		  timer2_flag = 0;
 
 	  }
 
 	  if (timer4_flag == 1){
-
-		  // Acá se realiza el control PID
-		  //CONTROL
-		  	uint8_t u = 0;
+		  //CONTROL PID
+			uint8_t u = 0;
 
 			PIDController_Update(&pid, desired_speed_rpm, current_speed_rpm);
 
@@ -251,15 +312,14 @@ int main(void)
 
 			duty_cycle = u;
 
-		  //testeo
-		  //HAL_GPIO_TogglePin(TEST_LED_GPIO_Port , TEST_LED_Pin);
-
 		  timer4_flag = 0;
 	  }
 
 	  if (estimation_flag){
-//		  HAL_GPIO_TogglePin(TEST_LED_GPIO_Port , TEST_LED_Pin);
+
+		  // Estimamos y enviamos por CAN la velocidad
 		  current_speed_rpm = steps*STEPS2RPM;
+		  send_can_data();	// Enviamos la data por CAN
 		  estimation_flag = 0;
 		  steps = 0;
 	  }
@@ -358,6 +418,56 @@ static void MX_ADC1_Init(void)
   /* USER CODE BEGIN ADC1_Init 2 */
 
   /* USER CODE END ADC1_Init 2 */
+
+}
+
+/**
+  * @brief CAN Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_CAN_Init(void)
+{
+
+  /* USER CODE BEGIN CAN_Init 0 */
+
+  /* USER CODE END CAN_Init 0 */
+
+  /* USER CODE BEGIN CAN_Init 1 */
+
+  /* USER CODE END CAN_Init 1 */
+  hcan.Instance = CAN1;
+  hcan.Init.Prescaler = 16;
+  hcan.Init.Mode = CAN_MODE_NORMAL;
+  hcan.Init.SyncJumpWidth = CAN_SJW_1TQ;
+  hcan.Init.TimeSeg1 = CAN_BS1_1TQ;
+  hcan.Init.TimeSeg2 = CAN_BS2_1TQ;
+  hcan.Init.TimeTriggeredMode = DISABLE;
+  hcan.Init.AutoBusOff = DISABLE;
+  hcan.Init.AutoWakeUp = DISABLE;
+  hcan.Init.AutoRetransmission = DISABLE;
+  hcan.Init.ReceiveFifoLocked = DISABLE;
+  hcan.Init.TransmitFifoPriority = DISABLE;
+  if (HAL_CAN_Init(&hcan) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN CAN_Init 2 */
+  CAN_FilterTypeDef canfilterconfig;
+
+  canfilterconfig.FilterActivation = CAN_FILTER_ENABLE;
+  canfilterconfig.FilterBank = 10;  // anything between 0 to SlaveStartFilterBank
+  canfilterconfig.FilterFIFOAssignment = CAN_RX_FIFO0;
+  canfilterconfig.FilterIdHigh = 0x01<<5;
+  canfilterconfig.FilterIdLow = 0;
+  canfilterconfig.FilterMaskIdHigh = 0x01<<5;	// esto solo permite el id que tiene el bit 1 activo, osea id's primos
+  canfilterconfig.FilterMaskIdLow = 0x0000;
+  canfilterconfig.FilterMode = CAN_FILTERMODE_IDMASK;
+  canfilterconfig.FilterScale = CAN_FILTERSCALE_32BIT;
+  canfilterconfig.SlaveStartFilterBank = 0;  // 13 to 27 are assigned to slave CAN (CAN 2) OR 0 to 12 are assigned to CAN1
+
+  HAL_CAN_ConfigFilter(&hcan, &canfilterconfig);
+  /* USER CODE END CAN_Init 2 */
 
 }
 
@@ -888,6 +998,40 @@ void delay_us(uint16_t us){
 	__HAL_TIM_SET_COUNTER(&htim3,0);  // set the counter value a 0
 	while (__HAL_TIM_GET_COUNTER(&htim3) < us);  // wait for the counter to reach the us input in the parameter
 }
+
+void send_can_data(void){
+
+	if (SPEED_UNITS == 0){
+		// RPM
+		if (current_speed_rpm > 255){
+				TxData[0] = 255;
+				TxData[1] = current_speed_rpm - 255;
+		}
+		else{
+			TxData[0] = current_speed_rpm;
+			TxData[1] = 0;
+		}
+	}
+	else{
+		// KMPH
+		TxData[0] = current_speed_rpm*RPM2KMH;
+		TxData[1] = 0;
+
+	}
+
+	// Alojamos el duty cycle
+	TxData[2] = duty_cycle;
+
+	//Enviamos el estado ON OFF del sistema
+	CAN_FLAG_REG = (CAN_FLAG_REG & (~(1 << PW))) | (power << PW); // Sending the ON (1) or OFF (0)
+
+
+	TxData[7] = CAN_FLAG_REG;	// Actualizamos con los flag
+
+	HAL_CAN_AddTxMessage(&hcan, &TxHeader, TxData, &TxMailbox);
+
+}
+
 //INTERRUPCIONES
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){
@@ -907,6 +1051,47 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){
 			timer4_counts = 0;
 		}
 		timer4_counts += 1;
+	}
+}
+
+void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan){
+	HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &RxHeader, RxData);
+
+	if (RxData[0] == 96 && RxData[1] == 234){ // HMI Page 60000
+
+		if (RxData[4] == 1){ //HMI button 1
+			power = 1;
+		}
+		if (RxData[4] == 2){ //HMI button 2
+			power = 0;
+		}
+
+
+		if (RxData[5] == 16){ //HMI down button
+			//TxData[4] = 0;		//Change button color
+			CAN_FLAG_REG &= ~(1 << CS1);
+			CAN_FLAG_REG &= ~(1 << CS0); //Cruise speed 0
+
+		}
+		if (RxData[5] == 8){ //HMI left button
+			//TxData[4] = 1; 		//Change button color
+			CAN_FLAG_REG &= ~(1 << CS1);
+			CAN_FLAG_REG |=  (1 << CS0); //Cruise speed 1
+
+		}
+		if (RxData[5] == 32){ //HMI right button
+			//TxData[4] = 2;		//Change button color
+			CAN_FLAG_REG |=  (1 << CS1);
+			CAN_FLAG_REG &= ~(1 << CS0); //Cruise speed 2
+
+		}
+		if (RxData[5] == 2){ //HMI up button
+			//TxData[4] = 3;		//Change button color
+			CAN_FLAG_REG |=  (1 << CS1);
+			CAN_FLAG_REG |=  (1 << CS0); //Cruise speed 3
+
+		}
+
 	}
 }
 
