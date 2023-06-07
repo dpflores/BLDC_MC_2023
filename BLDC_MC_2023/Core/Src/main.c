@@ -1,3 +1,4 @@
+
 /* USER CODE BEGIN Header */
 /**
   ******************************************************************************
@@ -40,7 +41,6 @@
 
 #define STEPS2RPM 60*ESTIMATION_RATE/POLE_PAIRS/6 // 60 segundos, 2 Hz, 23 pp, 6 pasos
 
-
 // Definiciones adicionales
 
 #define COMMUTATION_DELAY_US 350u	// microsegundos para el delay
@@ -49,8 +49,8 @@
 /* Controller parameters */
 // Para ESTIMATION_RATE de 2u: kp = 0.2; ki = 0.8; kd=0.0 (delay 700u)
 //						   5u: kp = 0.02; ki = 0.5; kd=0.0 (delay 700u)
-#define PID_KP  0.03f //
-#define PID_KI  0.35f // 0.15 0.01
+#define PID_KP  0.1f //
+#define PID_KI  0.6f // 0.15 0.01
 #define PID_KD  0.0f //0.0
 
 #define PID_TAU 0.02f
@@ -233,20 +233,18 @@ int main(void)
 
 		  // Acá se realiza el control PID
 		  //CONTROL
-		  	uint8_t u = 0;
+		  uint8_t u = 0;
 
-			PIDController_Update(&pid, desired_speed_rpm, current_speed_rpm);
+		  PIDController_Update(&pid, desired_speed_rpm, current_speed_rpm);
 
-			// Protection
-			if(desired_speed_rpm<=20){
-				PIDController_Reset(&pid);
-			}
+		  // Protection
+		  if(desired_speed_rpm<=20){
+			  PIDController_Reset(&pid);
+		  }
 
-			integral = pid.integrator;
-
-			u = pid.out;
-
-			duty_cycle = u;
+		  integral = pid.integrator;
+		  u = pid.out;
+		  duty_cycle = u;
 
 		  //testeo
 		  //HAL_GPIO_TogglePin(TEST_LED_GPIO_Port , TEST_LED_Pin);
