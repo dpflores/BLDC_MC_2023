@@ -42,6 +42,7 @@
 
 
 // Definiciones adicionales
+//jajas
 
 #define COMMUTATION_DELAY_US 350u	// microsegundos para el delay
 
