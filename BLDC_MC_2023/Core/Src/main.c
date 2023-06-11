@@ -1,4 +1,3 @@
-
 /* USER CODE BEGIN Header */
 /**
   ******************************************************************************
@@ -42,6 +41,7 @@
 #define STEPS2RPM 60*ESTIMATION_RATE/POLE_PAIRS/6 // 60 segundos, 2 Hz, 23 pp, 6 pasos
 #define RPM2KMH 1/10.44
 #define SPEED_UNITS 0u		// 0 for RPM, 1 for KMH
+#define TELEMETRY 0u		// 0 for normal operation, 1 for telemetry
 // Definiciones adicionales
 
 #define COMMUTATION_DELAY_US 350u	// microsegundos para el delay
@@ -183,7 +183,8 @@ int main(void)
   /* MCU Configuration--------------------------------------------------------*/
 
   /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
-  HAL_Init();
+
+	HAL_Init();
 
   /* USER CODE BEGIN Init */
 
@@ -237,6 +238,13 @@ int main(void)
   //CAN FIFO activation
   HAL_CAN_ActivateNotification(&hcan, CAN_IT_RX_FIFO0_MSG_PENDING);
 
+	//Configurando la transmision
+  TxHeader.DLC = 8;  // Son 8 bytes de data
+  TxHeader.ExtId = 0;
+  TxHeader.IDE = CAN_ID_STD; //Identificador del mensaje
+  TxHeader.RTR = CAN_RTR_DATA;
+  TxHeader.StdId = 0x103;  // Este es el ID que mandaremos al periferico
+  TxHeader.TransmitGlobalTime = DISABLE;
 
   // CAN_FLAG_REG Initialization
   CAN_FLAG_REG |=  (1<<GF);	// General Flag 1 (necessary)
@@ -282,7 +290,13 @@ int main(void)
 
 	  if (timer2_flag == 1){
 
-		  get_adc();
+		  if (!TELEMETRY) {
+			  get_adc();
+		  }
+		  else {
+			  desired_speed_rpm = RxData[0] + RxData[1];
+		  }
+
 		  read_hall();
 
 		  if (direction == 0){
@@ -441,10 +455,10 @@ static void MX_CAN_Init(void)
 
   /* USER CODE END CAN_Init 1 */
   hcan.Instance = CAN1;
-  hcan.Init.Prescaler = 16;
+  hcan.Init.Prescaler = 8;
   hcan.Init.Mode = CAN_MODE_NORMAL;
   hcan.Init.SyncJumpWidth = CAN_SJW_1TQ;
-  hcan.Init.TimeSeg1 = CAN_BS1_1TQ;
+  hcan.Init.TimeSeg1 = CAN_BS1_2TQ;
   hcan.Init.TimeSeg2 = CAN_BS2_1TQ;
   hcan.Init.TimeTriggeredMode = DISABLE;
   hcan.Init.AutoBusOff = DISABLE;
@@ -464,7 +478,7 @@ static void MX_CAN_Init(void)
   canfilterconfig.FilterFIFOAssignment = CAN_RX_FIFO0;
   canfilterconfig.FilterIdHigh = 0x01<<5;
   canfilterconfig.FilterIdLow = 0;
-  canfilterconfig.FilterMaskIdHigh = 0x01<<5;	// esto solo permite el id que tiene el bit 1 activo, osea id's primos
+  canfilterconfig.FilterMaskIdHigh = 0x01<<5;	// esto solo permite el id que tiene el bit 1 activo, osea id's impares
   canfilterconfig.FilterMaskIdLow = 0x0000;
   canfilterconfig.FilterMode = CAN_FILTERMODE_IDMASK;
   canfilterconfig.FilterScale = CAN_FILTERSCALE_32BIT;
@@ -1006,7 +1020,7 @@ void delay_us(uint16_t us){
 void send_can_data(void){
 
 	if (SPEED_UNITS == 0){
-		// RPM
+		// Current speed (RPM)
 		if (current_speed_rpm > 255){
 				TxData[0] = 255;
 				TxData[1] = current_speed_rpm - 255;
@@ -1014,6 +1028,15 @@ void send_can_data(void){
 		else{
 			TxData[0] = current_speed_rpm;
 			TxData[1] = 0;
+		}
+		// Desired speed (RPM)
+		if (desired_speed_rpm > 255){
+				TxData[3] = 255;
+				TxData[4] = desired_speed_rpm - 255;
+		}
+		else{
+			TxData[3] = desired_speed_rpm;
+			TxData[4] = 0;
 		}
 	}
 	else{
