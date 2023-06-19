@@ -45,9 +45,8 @@
 #define PID 0u				// 0 for normal operation, 1 for PID longitudinal control
 
 #define LONGITUDINAL_CAN_ID 255u  // ID decimal para la trama del control longitudinal
-#define LATERAL_CAN_ID 253u       // ID decimal para la trama del control lateral
 #define MC_CAN_ID 259u            // ID decimal de este dispositivo (Motor Controller)
-#define HMI_CAN_ID 1u             // ID en decimal del display del volante
+#define HMI_CAN_ID 1u             // ID decimal del display del volante
 // Definiciones adicionales
 
 #define COMMUTATION_DELAY_US 350u	// microsegundos para el delay
@@ -139,7 +138,7 @@ uint8_t hall_a = 0;
 uint8_t hall_b = 0;
 uint8_t hall_c = 0;
 
-uint8_t direction = 0;		// 0 for forward, 1 for backward
+uint8_t direction = 0;		// 0 for forward, 1 for backward (ALTAS CORRIENTES EN Backward)
 uint8_t bldc_prev_step = 0;
 uint8_t bldc_step = 0;
 uint16_t steps = 0;
@@ -249,7 +248,7 @@ int main(void)
   TxHeader.ExtId = 0;
   TxHeader.IDE = CAN_ID_STD; //Identificador del mensaje
   TxHeader.RTR = CAN_RTR_DATA;
-  TxHeader.StdId = MC_CAN_ID;  // Este es el ID que mandaremos al periferico
+  TxHeader.StdId = MC_CAN_ID;  // Este es el ID que mandaremos al periferico (revisar defines)
   TxHeader.TransmitGlobalTime = DISABLE;
 
   // CAN_FLAG_REG Initialization
@@ -295,7 +294,7 @@ int main(void)
   {
 
 	  if (timer2_flag == 1){
-
+      // Si se activa la telemetria la velocidad deseada llega a partir de la data CAN
 		  if (!TELEMETRY) {
 			  get_adc();
 		  }
@@ -329,9 +328,6 @@ int main(void)
 			u = pid.out;
 
 			duty_cycle = u;
-
-		  //testeo
-		  //HAL_GPIO_TogglePin(TEST_LED_GPIO_Port , TEST_LED_Pin);
 
 		  timer4_flag = 0;
 	  }
