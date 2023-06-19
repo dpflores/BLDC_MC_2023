@@ -41,9 +41,13 @@
 #define STEPS2RPM 60*ESTIMATION_RATE/POLE_PAIRS/6 // 60 segundos, 2 Hz, 23 pp, 6 pasos
 #define RPM2KMH 1/10.44
 #define SPEED_UNITS 0u		// 0 for RPM, 1 for KMH
-#define TELEMETRY 0u		// 0 for normal operation, 1 for telemetry
+#define TELEMETRY 0u		  // 0 for normal operation, 1 for telemetry
 #define PID 0u				// 0 for normal operation, 1 for PID longitudinal control
 
+#define LONGITUDINAL_CAN_ID 255u  // ID decimal para la trama del control longitudinal
+#define LATERAL_CAN_ID 253u       // ID decimal para la trama del control lateral
+#define MC_CAN_ID 259u            // ID decimal de este dispositivo (Motor Controller)
+#define HMI_CAN_ID 1u             // ID en decimal del display del volante
 // Definiciones adicionales
 
 #define COMMUTATION_DELAY_US 350u	// microsegundos para el delay
@@ -245,7 +249,7 @@ int main(void)
   TxHeader.ExtId = 0;
   TxHeader.IDE = CAN_ID_STD; //Identificador del mensaje
   TxHeader.RTR = CAN_RTR_DATA;
-  TxHeader.StdId = 0x103;  // Este es el ID que mandaremos al periferico
+  TxHeader.StdId = MC_CAN_ID;  // Este es el ID que mandaremos al periferico
   TxHeader.TransmitGlobalTime = DISABLE;
 
   // CAN_FLAG_REG Initialization
@@ -294,9 +298,6 @@ int main(void)
 
 		  if (!TELEMETRY) {
 			  get_adc();
-		  }
-		  else {
-			  desired_speed_rpm = RxData[0] + RxData[1];
 		  }
 
 		  read_hall();
@@ -784,21 +785,6 @@ void read_hall(void){
 	hall_b = HAL_GPIO_ReadPin(HALL_B_GPIO_Port,HALL_B_Pin);
 	hall_c = HAL_GPIO_ReadPin(HALL_C_GPIO_Port,HALL_C_Pin);
 
-	// testing for one value
-	//	bldc_step = 3;
-	// end testing
-
-	// testing for continous changes
-//	if (bldc_step > 6){
-//		bldc_step = 1;
-//	}
-//	else {
-//		bldc_step++;
-//	}
-	// end testing
-
-
-	// Descomentar luego del testeo
 	bldc_step = hall_a + 2*hall_b + 4*hall_c;
 
 	// Para calcular velocidad
@@ -1091,6 +1077,12 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){
 void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan){
 	HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &RxHeader, RxData);
 
+  // Si es que se tiene activada la telemetria y el ID es del axotec
+  if (TELEMETRY && RxHeader.StdId == AXOTEC_ID){
+	  desired_speed_rpm = RxData[0] + RxData[1];
+  }
+
+  // Para la data que llega del HMI
 	if (RxData[0] == 96 && RxData[1] == 234){ // HMI Page 60000
 
 		if (RxData[4] == 1){ //HMI button 1
