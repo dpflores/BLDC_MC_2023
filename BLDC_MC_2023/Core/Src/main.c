@@ -42,6 +42,8 @@
 #define RPM2KMH 1/10.44
 #define SPEED_UNITS 0u		// 0 for RPM, 1 for KMH
 #define TELEMETRY 0u		// 0 for normal operation, 1 for telemetry
+#define PID 0u				// 0 for normal operation, 1 for PID longitudinal control
+
 // Definiciones adicionales
 
 #define COMMUTATION_DELAY_US 350u	// microsegundos para el delay
@@ -50,8 +52,8 @@
 /* Controller parameters */
 // Para ESTIMATION_RATE de 2u: kp = 0.2; ki = 0.8; kd=0.0 (delay 700u)
 //						   5u: kp = 0.02; ki = 0.5; kd=0.0 (delay 700u)
-#define PID_KP  0.1f //
-#define PID_KI  0.6f // 0.15 0.01
+#define PID_KP  0.1f// 0.05f //
+#define PID_KI  0.6f// 0.5f // 0.15 0.01
 #define PID_KD  0.0f //0.0
 
 #define PID_TAU 0.02f
@@ -310,7 +312,7 @@ int main(void)
 
 	  }
 
-	  if (timer4_flag == 1){
+	  if (timer4_flag == 1 && PID){
 		  //CONTROL PID
 			uint8_t u = 0;
 
@@ -767,9 +769,14 @@ void get_adc(void){
 //		duty_cycle = 0;
 //	}
 
-	rate_adc = STEP_ADC_RPM*48*12/VOLTAJE;
-	raw_adc = rate_adc*(raw_adc/rate_adc);
-	desired_speed_rpm = raw_adc*STEP_ADC_RPM/rate_adc;
+	if (PID){
+		rate_adc = STEP_ADC_RPM*48*12/VOLTAJE;
+		raw_adc = rate_adc*(raw_adc/rate_adc);
+		desired_speed_rpm = raw_adc*STEP_ADC_RPM/rate_adc;
+	}
+	else {
+		duty_cycle = 100*raw_adc/4095;
+	}
 }
 
 void read_hall(void){
